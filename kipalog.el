@@ -49,10 +49,17 @@
 (defmacro kipalog--deferize (orig-func &rest args)
   "Change ORIG-FUNC (&rest ARGS CALLBACK) to deferred form."
   (let* ((d (deferred:new #'identity))
-         (args (nconc args '((lambda (res)
-                               (deferred:callback-post d res))))))
-    (apply orig-func args)
-    d))
+         (args (nconc args `((lambda (res)
+                               (deferred:callback-post ,d res))))))
+    `(progn
+       (funcall ,orig-func ,@args)
+       ,d)))
+
+(defvar kipalog--header
+  `(("Content-Type" . "application-json")
+    ("Accept-Charset" . "application-json")
+    ("X-Kipalog-Token" . ,kipalog-token))
+  "Common header for kipalog request.")
 
 (defun kipalog--post (title content status tags &optional callback)
   "TITLE CONTENT STATUS TAGS CALLBACK."
@@ -63,8 +70,7 @@
                                 (status . ,status)
                                 (tag . ,tags)))
            :parser 'json-read
-           :headers `(("Accept-Charset" . "application-json")
-                      ("X-Kipalog-Token" . ,kipalog-token))
+           :headers kipalog--header
            :success (cl-function
                      (lambda (&key data &allow-other-keys)
                        (if callback
@@ -90,7 +96,7 @@ Using prefix will post as draft instead."
     (deferred:nextc it
       #'(lambda (res)
           (message "%d: %s"
-                   (assoc 'status res) (assoc 'cause res))))))
+                   (alist-get 'status res) (alist-get 'cause res))))))
 
 (defun kipalog--preview (content callback)
   "CONTENT CALLBACK."
@@ -98,8 +104,7 @@ Using prefix will post as draft instead."
            :type "POST"
            :data (json-encode `((content . ,content)))
            :parser 'json-read
-           :headers `(("Accept-Charset" . "application-json")
-                      ("X-Kipalog-Token" . ,kipalog-token))
+           :headers kipalog--header
            :success (cl-function
                      (lambda (&key data &allow-other-keys)
                        (if callback
@@ -117,14 +122,14 @@ Using prefix will post as draft instead."
     (kipalog--deferize #'kipalog--preview (buffer-string))
     (deferred:nextc it
       #'(lambda (res)
-          (if (>= (assoc 'status res) 400)
+          (if (>= (alist-get 'status res) 400)
               ;; HTTP error
               (message "%d: %s"
-                       (assoc 'status res) (assoc 'cause res))
+                       (alist-get 'status res) (alist-get 'cause res))
             (save-excursion
               (with-current-buffer (get-buffer-create "*kipalog*")
                 (erase-buffer)
-                (insert (assoc 'content res))
+                (insert (alist-get 'content res))
                 (shr-render-buffer (current-buffer)))))))))
 
 (provide 'kipalog)
