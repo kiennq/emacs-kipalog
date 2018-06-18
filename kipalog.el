@@ -3,6 +3,7 @@
 ;; Copyright (C) 2018
 
 ;; Author:  Kien Nguyen <kien.n.quang@gmail.com>
+;; Version: 0.0.1
 ;; Keywords: kipalog
 ;; Package-Requires: ((emacs "24") (request) (deferred "0.4.0") (json))
 
