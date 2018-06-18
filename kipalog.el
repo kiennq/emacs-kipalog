@@ -44,7 +44,13 @@
   :type 'string
   :group 'kipalog)
 
-(custom-set-variables '(request-backend 'url-retrieve))
+;; (custom-set-variables '(request-backend 'url-retrieve))
+(if (eq system-type 'windows-nt)
+    (advice-add 'request--curl-command :around
+                (lambda (orig-func &rest args)
+                  ;; Monkey-patch, windows curl doesnt support --compressed yet
+                  (let ((r (apply orig-func args)))
+                    (delete "--compressed" r)))))
 
 (defmacro kipalog--deferize (orig-func &rest args)
   "Change ORIG-FUNC (&rest ARGS CALLBACK) to deferred form."
@@ -56,20 +62,26 @@
        ,d)))
 
 (defvar kipalog--header
-  `(("Content-Type" . "application-json")
-    ("Accept-Charset" . "application-json")
-    ("X-Kipalog-Token" . ,kipalog-token))
+  `(("content-type" . "application/json")
+    ("accept-charset" . "application/json")
+    ("x-kipalog-token" . ,kipalog-token))
   "Common header for kipalog request.")
+
+(defmacro kipalog--encode (str)
+  `(encode-coding-string ,str 'utf-8 t))
+
+(defmacro kipalog--decode (str)
+  `(decode-coding-string ,str 'utf-8 t))
 
 (defun kipalog--post (title content status tags &optional callback)
   "TITLE CONTENT STATUS TAGS CALLBACK."
   (request (concat kipalog-url "/api/v1/post")
            :type "POST"
-           :data (json-encode `((title . ,title)
-                                (content . ,content)
-                                (status . ,status)
-                                (tag . ,tags)))
-           :parser 'json-read
+           :data (kipalog--encode (json-encode `((title . ,title)
+                                                 (content . ,content)
+                                                 (status . ,status)
+                                                 (tag . ,tags))))
+           :parser (lambda () (json-read-from-string (kipalog--decode (buffer-string))))
            :headers kipalog--header
            :success (cl-function
                      (lambda (&key data &allow-other-keys)
@@ -80,30 +92,51 @@
                           (message "Got error: %S" error-thrown)))
            :complete (lambda (&rest _) (message "Finished!"))))
 
+(defun kipalog--find (part line)
+  "Find metadata PART (title or tags) at LINE."
+  (save-excursion
+    (goto-line line)
+    (save-match-data
+      (let ((case-fold-search t)
+            (current-string
+             (buffer-substring (line-beginning-position) (line-end-position))))
+        (and (string-match (concat "<!--\\s-*" part "\\s-*\\(.*?\\)\\s-*-->")
+                           current-string)
+             (match-string 1 current-string))))))
+
 ;;;###autoload
-(defun kipalog-post-buffer (title tags)
+(defun kipalog-post-buffer (&optional title tags)
   "Post current buffer with TITLE and TAGS.
-Using prefix will post as draft instead."
-  (interactive
-   (list (read-string "Title: " nil t)
-         (read-string "Tags (separated by comma): " nil t)))
-  (deferred:$
-    (kipalog--deferize #'kipalog--post
-                       title
-                       (buffer-string)
-                       (if current-prefix-arg "draft" "published")
-                       tags)
-    (deferred:nextc it
-      #'(lambda (res)
-          (message "%d: %s"
-                   (alist-get 'status res) (alist-get 'cause res))))))
+Using prefix will post as draft instead.
+The TITLE and TAGS will be automatically decided from first two lines
+of current buffer.
+For example <!-- Title: My title --> at the first line will give the
+post title `My title`."
+  (interactive)
+  (let ((title (or title
+                   (kipalog--find "Title:" 1)
+                   (read-string "Title: " nil t)))
+        (tags (or tags
+                  (kipalog--find "Tags:" 2)
+                   (read-string "Tags (separated by comma): " nil t))))
+
+    (deferred:$
+      (kipalog--deferize #'kipalog--post
+                         title
+                         (buffer-string)
+                         (if current-prefix-arg "draft" "published")
+                         tags)
+      (deferred:nextc it
+        #'(lambda (res)
+            (message "%d: %s"
+                     (alist-get 'status res) (alist-get 'cause res)))))))
 
 (defun kipalog--preview (content callback)
   "CONTENT CALLBACK."
   (request (concat kipalog-url "/api/v1/post/preview")
            :type "POST"
-           :data (json-encode `((content . ,content)))
-           :parser 'json-read
+           :data (kipalog--encode (json-encode `((content . ,content))))
+           :parser (lambda () (json-read-from-string (kipalog--decode (buffer-string))))
            :headers kipalog--header
            :success (cl-function
                      (lambda (&key data &allow-other-keys)
