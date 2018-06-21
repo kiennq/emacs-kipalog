@@ -7,7 +7,7 @@ Let you write and post to [Kipalog](https://kipalog.com/) from right within `Ema
 **Recommended**: Using [`straigh.el`](https://github.com/raxod502/straight.el) with [`use-package`](https://github.com/jwiegley/use-package)
 
 ``` emacs-lisp
-(use-package emacs-kipalog
+(use-package kipalog
   :straight (:host github :repo "kiennq/emacs-kipalog ")
   :defer t
   :init
