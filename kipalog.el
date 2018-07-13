@@ -53,7 +53,7 @@
                   (let ((r (apply orig-func args)))
                     (delete "--compressed" r)))))
 
-(defmacro kipalog--deferize (orig-func &rest args)
+(defmacro kipalog--deferrize (orig-func &rest args)
   "Change ORIG-FUNC (&rest ARGS CALLBACK) to deferred form."
   (let* ((d (deferred:new #'identity))
          (args (nconc args `((lambda (res)
@@ -122,7 +122,7 @@ post title `My title`."
                    (read-string "Tags (separated by comma): " nil t))))
 
     (deferred:$
-      (kipalog--deferize #'kipalog--post
+      (kipalog--deferrize #'kipalog--post
                          title
                          (buffer-string)
                          (if current-prefix-arg "draft" "published")
@@ -153,7 +153,7 @@ post title `My title`."
   "Showing preview of current buffer when post."
   (interactive)
   (deferred:$
-    (kipalog--deferize #'kipalog--preview (buffer-string))
+    (kipalog--deferrize #'kipalog--preview (buffer-string))
     (deferred:nextc it
       #'(lambda (res)
           (if (>= (alist-get 'status res) 400)
