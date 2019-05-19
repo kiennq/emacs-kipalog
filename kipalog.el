@@ -51,7 +51,8 @@
                 (lambda (orig-func &rest args)
                   ;; Monkey-patch, windows curl doesnt support --compressed yet
                   (let ((r (apply orig-func args)))
-                    (delete "--compressed" r)))))
+                    (delete "--compressed" r)))
+                '((name . request--curl-no-compress))))
 
 (defmacro kipalog--deferrize (orig-func &rest args)
   "Change ORIG-FUNC (&rest ARGS CALLBACK) to deferred form."
