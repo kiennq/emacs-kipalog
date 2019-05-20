@@ -5,7 +5,7 @@
 ;; Author:  Kien Nguyen <kien.n.quang@gmail.com>
 ;; Version: 0.0.1
 ;; Keywords: kipalog
-;; Package-Requires: ((emacs "24") (request) (deferred "0.4.0") (json))
+;; Package-Requires: ((emacs "24") (request) (aio) (json))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -22,13 +22,13 @@
 
 ;;; Commentary:
 
-;; 
+;;
 
 ;;; Code:
 
 (require 'request)
 (require 'json)
-(require 'deferred)
+(require 'aio)
 (require 'shr)
 
 (defgroup kipalog nil
@@ -54,15 +54,6 @@
                     (delete "--compressed" r)))
                 '((name . request--curl-no-compress))))
 
-(defmacro kipalog--deferrize (orig-func &rest args)
-  "Change ORIG-FUNC (&rest ARGS CALLBACK) to deferred form."
-  (let* ((d (deferred:new #'identity))
-         (args (nconc args `((lambda (res)
-                               (deferred:callback-post ,d res))))))
-    `(progn
-       (funcall ,orig-func ,@args)
-       ,d)))
-
 (defvar kipalog--header
   `(("content-type" . "application/json")
     ("accept-charset" . "application/json")
@@ -75,24 +66,25 @@
 (defmacro kipalog--decode (str)
   `(decode-coding-string ,str 'utf-8 t))
 
-(defun kipalog--post (title content status tags &optional callback)
-  "TITLE CONTENT STATUS TAGS CALLBACK."
-  (request (concat kipalog-url "/api/v1/post")
-           :type "POST"
-           :data (kipalog--encode (json-encode `((title . ,title)
-                                                 (content . ,content)
-                                                 (status . ,status)
-                                                 (tag . ,tags))))
-           :parser (lambda () (json-read-from-string (kipalog--decode (buffer-string))))
-           :headers kipalog--header
-           :success (cl-function
-                     (lambda (&key data &allow-other-keys)
-                       (if callback
-                           (funcall callback data))))
-           :error
-           (cl-function (lambda (&rest args &key error-thrown &allow-other-keys)
-                          (message "Got error: %S" error-thrown)))
-           :complete (lambda (&rest _) (message "Finished!"))))
+(aio-defun kipalog--post (title content status tags)
+  "TITLE CONTENT STATUS TAGS."
+  (let ((acallback (aio-make-callback)))
+    (request (concat kipalog-url "/api/v1/post")
+             :type "POST"
+             :data (kipalog--encode (json-encode `((title . ,title)
+                                                   (content . ,content)
+                                                   (status . ,status)
+                                                   (tag . ,tags))))
+             :parser (lambda () (json-read-from-string (kipalog--decode (buffer-string))))
+             :headers kipalog--header
+             :success (cl-function
+                       (lambda (&key data &allow-other-keys)
+                         (funcall (car acallback) data)))
+             :error
+             (cl-function (lambda (&rest args &key error-thrown &allow-other-keys)
+                            (message "Got error: %S" error-thrown)))
+             :complete (lambda (&rest _) (message "Finished!")))
+    (car (aio-chain (cdr acallback)))))
 
 (defun kipalog--find (part line)
   "Find metadata PART (title or tags) at LINE."
@@ -115,57 +107,53 @@ of current buffer.
 For example <!-- Title: My title --> at the first line will give the
 post title `My title`."
   (interactive)
-  (let ((title (or title
-                   (kipalog--find "Title:" 1)
-                   (read-string "Title: " nil t)))
-        (tags (or tags
-                  (kipalog--find "Tags:" 2)
-                   (read-string "Tags (separated by comma): " nil t))))
+  (aio-with-async
+    (let* ((title (or title
+                      (kipalog--find "Title:" 1)
+                      (read-string "Title: " nil t)))
+           (tags (or tags
+                     (kipalog--find "Tags:" 2)
+                     (read-string "Tags (separated by comma): " nil t)))
+           (res (aio-await (kipalog--post
+                            title
+                            (buffer-string)
+                            (if current-prefix-arg "draft" "published")
+                            tags))))
+      (message "%d: %s"
+               (alist-get 'status res) (alist-get 'cause res)))))
 
-    (deferred:$
-      (kipalog--deferrize #'kipalog--post
-                         title
-                         (buffer-string)
-                         (if current-prefix-arg "draft" "published")
-                         tags)
-      (deferred:nextc it
-        #'(lambda (res)
-            (message "%d: %s"
-                     (alist-get 'status res) (alist-get 'cause res)))))))
-
-(defun kipalog--preview (content callback)
+(aio-defun kipalog--preview (content)
   "CONTENT CALLBACK."
-  (request (concat kipalog-url "/api/v1/post/preview")
-           :type "POST"
-           :data (kipalog--encode (json-encode `((content . ,content))))
-           :parser (lambda () (json-read-from-string (kipalog--decode (buffer-string))))
-           :headers kipalog--header
-           :success (cl-function
-                     (lambda (&key data &allow-other-keys)
-                       (if callback
-                           (funcall callback data))))
-           :error
-           (cl-function (lambda (&rest args &key error-thrown &allow-other-keys)
-                          (message "Got error: %S" error-thrown)))
-           :complete (lambda (&rest _) (message "Finished!"))))
+  (let* ((acallback (aio-make-callback)))
+    (request (concat kipalog-url "/api/v1/post/preview")
+             :type "POST"
+             :data (kipalog--encode (json-encode `((content . ,content))))
+             :parser (lambda () (json-read-from-string (kipalog--decode (buffer-string))))
+             :headers kipalog--header
+             :success (cl-function
+                       (lambda (&key data &allow-other-keys)
+                         (funcall (car acallback) data)))
+             :error
+             (cl-function (lambda (&rest args &key error-thrown &allow-other-keys)
+                            (message "Got error: %S" error-thrown)))
+             :complete (lambda (&rest _) (message "Finished!")))
+    (car (aio-chain (cdr acallback)))))
 
 ;;;###autoload
 (defun kipalog-preview-buffer ()
   "Showing preview of current buffer when post."
   (interactive)
-  (deferred:$
-    (kipalog--deferrize #'kipalog--preview (buffer-string))
-    (deferred:nextc it
-      #'(lambda (res)
-          (if (>= (alist-get 'status res) 400)
-              ;; HTTP error
-              (message "%d: %s"
-                       (alist-get 'status res) (alist-get 'cause res))
-            (save-excursion
-              (with-current-buffer (get-buffer-create "*kipalog*")
-                (erase-buffer)
-                (insert (alist-get 'content res))
-                (shr-render-buffer (current-buffer)))))))))
+  (aio-with-async
+    (let ((res (aio-await (kipalog--preview (buffer-string)))))
+      (if (>= (alist-get 'status res) 400)
+          ;; HTTP error
+          (message "%d: %s"
+                   (alist-get 'status res) (alist-get 'cause res))
+        (save-excursion
+          (with-current-buffer (get-buffer-create "*kipalog*")
+            (erase-buffer)
+            (insert (alist-get 'content res))
+            (shr-render-buffer (current-buffer))))))))
 
 (provide 'kipalog)
 ;;; kipalog.el ends here
