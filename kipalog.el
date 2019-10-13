@@ -46,14 +46,6 @@
   :group 'kipalog)
 
 ;; (custom-set-variables '(request-backend 'url-retrieve))
-(if (eq system-type 'windows-nt)
-    (advice-add 'request--curl-command :around
-                (lambda (orig-func &rest args)
-                  ;; Monkey-patch, windows curl doesnt support --compressed yet
-                  (let ((r (apply orig-func args)))
-                    (delete "--compressed" r)))
-                '((name . request--curl-no-compress))))
-
 (defvar kipalog--header
   `(("content-type" . "application/json")
     ("accept-charset" . "application/json")
